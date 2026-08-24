@@ -1,57 +1,39 @@
-# Render.com deployment config for PokéSales Bot
-# This file tells Render to run your Telegram bot as a persistent web service
+# Render.com deployment config for PokéSales Bot (Python)
 
 services:
   - type: web
     name: pokebot
     env: python
-    plan: free  # or "starter" for more resources
-    
-    # Build command (empty since we use uv/venv)
-    buildCommand: ""
-    
-    # Start command — runs the bot in the background
-    # The bot uses polling to receive Telegram updates
-    startCommand: .venv/bin/python run_bot.py
-    
-    # Health check — Render needs this to keep the service up
-    # Our bot doesn't have a traditional HTTP endpoint, but Render needs it
-    healthCheck:
-      httpPath: /health
-      interval: 5
-      timeout: 3
-      retries: 2
-    
-    # Auto-allocate a port (Render requires port binding for web services)
-    # Our bot uses python-telegram-bot which defaults, but we expose for Render
+    plan: free
+
+    # Build: install Python deps
+    buildCommand: pip install -r requirements.txt
+
+    # Start: run the Telegram bot (polling, keeps process alive)
+    startCommand: python run_bot.py
+
+    # Health check — Render expects HTTP for web services
+    # Since bot uses polling, we add a simple health endpoint
+    healthCheckPath: /health
+
+    # Disk for database persistence
+    disk:
+      name: pokebot-data
+      mountPath: /opt/render/project/src/data
+      sizeGB: 1
+
     envVars:
-      # Telegram token — get from @BotFather
       - key: TELEGRAM_BOT_TOKEN
-        value: "8818543027:AAFq4xKT8nmvfoxhZ1Fbtm2XirEBRb-b40I"
-        
-      # Database URL — Render provisionals PostgreSQL
+        fromSecret: TELEGRAM_BOT_TOKEN
       - key: DATABASE_URL
         fromDatabase:
           name: pokebot-db
           property: connectionString
-          
-      # Optional: OpenAI key for AI vision (better card recognition)
       - key: OPENAI_API_KEY
-        fromSecret: OPENAI_API_KEY  # set in dashboard if you have one
-        
-      # Optional: Google Sheets integration
-      - key: GOOGLE_SERVICE_ACCOUNT
-        fromSecret: GOOGLE_SERVICE_ACCOUNT
-        
+        fromSecret: OPENAI_API_KEY
+      - key: GOOGLE_SERVICE_ACCOUNT_JSON
+        fromSecret: GOOGLE_SERVICE_ACCOUNT_JSON
       - key: GOOGLE_SHEET_ID
         fromSecret: GOOGLE_SHEET_ID
-        
-      # Allowlist — only these Telegram user IDs can record sales
       - key: ALLOWED_USER_IDS
-        value: "8818543027"
-    
-    # Disk size for database persistence
-    disk: 1GB
-    
-    # Auto-refresh on git push
-    autoDeploy: true
+        fromSecret: ALLOWED_USER_IDS
