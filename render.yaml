@@ -1,21 +1,13 @@
-# Render.com deployment config for PokéSales Bot (Python)
-
 services:
   - type: web
     name: pokebot
-    runtime: python
+    env: python
     plan: free
 
-    # Build: install Python deps
     buildCommand: pip install -r requirements.txt
-
-    # Start: run the Telegram bot (polling, keeps process alive)
     startCommand: python run_bot.py
+    port: 10000
 
-    # Health check — Render expects HTTP for web services
-    healthCheckPath: /health
-
-    # Disk for database persistence
     disk:
       name: pokebot-data
       mountPath: /opt/render/project/src/data
