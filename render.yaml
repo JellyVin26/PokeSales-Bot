@@ -3,7 +3,7 @@
 services:
   - type: web
     name: pokebot
-    env: python
+    runtime: python
     plan: free
 
     # Build: install Python deps
@@ -13,7 +13,6 @@ services:
     startCommand: python run_bot.py
 
     # Health check — Render expects HTTP for web services
-    # Since bot uses polling, we add a simple health endpoint
     healthCheckPath: /health
 
     # Disk for database persistence
@@ -23,6 +22,8 @@ services:
       sizeGB: 1
 
     envVars:
+      - key: PYTHON_VERSION
+        value: "3.11.15"
       - key: TELEGRAM_BOT_TOKEN
         fromSecret: TELEGRAM_BOT_TOKEN
       - key: DATABASE_URL
