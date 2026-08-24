@@ -67,7 +67,7 @@ def _parse_amount_internal(text: str) -> Optional[tuple[float, str, str]]:
         return amount, "MYR", payment
 
     # Pattern B: "RM 13" or "RM 13.50" (currency first)
-    m = re.match(r"^rm\s+(\d+(?:\.\d{1,2})?)(.+)$", text, re.IGNORECASE)
+    m = re.match(r"^rm\s+(\d+(?:\.\d{1,2})?)(.*)$", text, re.IGNORECASE)
     if m:
         amount = float(m.group(1))
         after = m.group(2).strip()
