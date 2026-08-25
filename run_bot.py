@@ -20,7 +20,7 @@ logging.basicConfig(
 log = logging.getLogger("pokebot")
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
-DATABASE_URL = os.getenv("DATABASE_URL", "")
+DATABASE_URL = os.getenv("DATABASE_URL") or f"sqlite:///{Path(__file__).resolve().parent / 'pokebot.db'}"
 
 missing = [k for k, v in [("TELEGRAM_BOT_TOKEN", TELEGRAM_BOT_TOKEN), ("DATABASE_URL", DATABASE_URL)] if not v]
 if missing:
