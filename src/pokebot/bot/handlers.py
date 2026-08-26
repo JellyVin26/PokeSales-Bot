@@ -56,16 +56,18 @@ async def _ensure_user(session: AsyncSession, update: Update) -> None:
 # ---- Simple commands ----
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("New Sale", callback_data="cmd:new"),
+         InlineKeyboardButton("Recent Sales", callback_data="cmd:sales")],
+        [InlineKeyboardButton("Today Summary", callback_data="cmd:today"),
+         InlineKeyboardButton("Cancel", callback_data="cmd:cancel")],
+    ])
     await update.message.reply_text(
         "PokéSales Bot\n\n"
-        "Send card photos + amount caption (e.g. RM 13) to record a sale.\n"
-        "Commands:\n"
-        "/new - start a sale\n"
-        "/sales - recent sales\n"
-        "/today - today's summary\n"
-        "/sale S-0001 - sale details\n"
-        "/card Dusknoir - card stats\n"
-        "/cancel - abort current sale"
+        "Record Pokémon card sales fast.\n"
+        "Send card photo + amount caption (e.g. RM 13).\n\n"
+        "Tap a button or type /new /sales /today",
+        reply_markup=kb,
     )
 
 
@@ -258,8 +260,42 @@ async def _analyze_and_confirm(update: Update, context: ContextTypes.DEFAULT_TYP
 async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     await query.answer()
-
     action = query.data.split(":")[1]
+
+    # cmd: prefix = /start menu buttons
+    if action == "new":
+        # reuse new_sale logic via a mock message
+        context.user_data["photos"] = []
+        await query.message.edit_reply_markup()
+        await query.message.reply_text(
+            "New sale. Send card photo(s), then caption with amount (e.g. RM 13 QR).\n/cancel to abort."
+        )
+        return
+    if action == "sales":
+        session: AsyncSession = context.bot_data["session"]
+        rows = await q.recent_sales(session, limit=10)
+        text = "No sales yet." if not rows else "Recent Sales\n\n" + "\n".join(
+            f"{s.id} -- RM {s.total_amount:.2f}" for s in rows
+        )
+        await query.message.edit_reply_markup()
+        await query.message.reply_text(text)
+        return
+    if action == "today":
+        session: AsyncSession = context.bot_data["session"]
+        s = await q.today_summary(session)
+        await query.message.edit_reply_markup()
+        await query.message.reply_text(
+            f"Today's Sales\n\nTransactions: {s['transactions']}\n"
+            f"Cards Sold: {s['cards_sold']}\nRevenue: RM {s['revenue']:.2f}"
+        )
+        return
+    if action == "cancel":
+        context.user_data.clear()
+        await query.message.edit_reply_markup()
+        await query.message.reply_text("Cancelled.")
+        return
+
+    # sale: prefix = sale confirmation buttons
     sale_id = context.user_data.get("last_sale_id")
 
     # Extract sale id from message text ("Sale #S-0001")
@@ -391,4 +427,4 @@ def register_handlers(application: Application) -> None:
     application.add_handler(CommandHandler("sale", sale_detail))
     application.add_handler(CommandHandler("card", card_cmd))
     application.add_handler(conv)
-    application.add_handler(CallbackQueryHandler(on_button, pattern=r"^sale:"))
+    application.add_handler(CallbackQueryHandler(on_button, pattern=r"^sale:|^cmd:"))
