@@ -93,7 +93,11 @@ def main() -> None:
 
 
 if __name__ == "__main__":
+    import traceback
     try:
         main()
     except KeyboardInterrupt:
         log.info("Shutdown")
+    except Exception:
+        log.error("FATAL:\n%s", traceback.format_exc())
+        raise
