@@ -6,9 +6,13 @@ from .models import Base
 
 
 def make_engine(db_url: str):
-    """Create an async engine. SQLite URLs get aiosqlite driver."""
+    """Create an async engine. SQLite gets aiosqlite, Postgres gets asyncpg."""
     if db_url.startswith("sqlite") and "+aiosqlite" not in db_url:
-        db_url = db_url.replace("sqlite://", "sqlite+aiosqlite://")
+        db_url = db_url.replace("sqlite://", "sqlite+aiosqlite://", 1)
+    elif db_url.startswith("postgres://"):
+        db_url = db_url.replace("postgres://", "postgresql+asyncpg://", 1)
+    elif db_url.startswith("postgresql://") and "+asyncpg" not in db_url:
+        db_url = db_url.replace("postgresql://", "postgresql+asyncpg://", 1)
     return create_async_engine(db_url, echo=False)
 
 
