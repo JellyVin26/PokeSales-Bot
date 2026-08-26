@@ -15,7 +15,7 @@ proto-plus==1.27.2
 pydantic==2.13.4
 pydantic-settings==2.14.2
 python-dotenv==1.2.3
-python-telegram-bot==22.6
+python-telegram-bot[webhooks]==22.6
 pytz==2025.2
 pyyaml==6.0.3
 PyYAML==6.0.3
