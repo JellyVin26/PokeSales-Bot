@@ -87,7 +87,7 @@ async def _try_gemini(image_data: bytes, mime_type: str) -> RecognitionResult:
     if not api_key:
         raise ValueError("No GEMINI_API_KEY")
     genai.configure(api_key=api_key)
-    model = genai.GenerativeModel("gemini-2.0-flash")
+    model = genai.GenerativeModel("gemini-2.5-flash")
     resp = await model.generate_content_async(
         [
             SCHEMA_PROMPT,
