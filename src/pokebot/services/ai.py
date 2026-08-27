@@ -102,14 +102,21 @@ async def _try_gemini(image_data: bytes, mime_type: str) -> RecognitionResult:
         ]}],
         "generationConfig": {"temperature": 0},
     }
-    async with httpx.AsyncClient(timeout=30) as client:
-        resp = await client.post(
-            f"{url}?key={api_key}",
-            json=payload,
-            headers={"Content-Type": "application/json"},
-        )
-        resp.raise_for_status()
-        data = resp.json()
+    # Retry up to 2 times for transient errors (503, 429)
+    for attempt in range(3):
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.post(
+                f"{url}?key={api_key}",
+                json=payload,
+                headers={"Content-Type": "application/json"},
+            )
+            if resp.status_code in (503, 429) and attempt < 2:
+                import asyncio
+                await asyncio.sleep(2 * (attempt + 1))
+                continue
+            resp.raise_for_status()
+            data = resp.json()
+            break
     text = data["candidates"][0]["content"]["parts"][0]["text"]
     return _to_result(_parse_response(text))
 
