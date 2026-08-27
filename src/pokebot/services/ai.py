@@ -94,7 +94,7 @@ async def _try_gemini(image_data: bytes, mime_type: str) -> RecognitionResult:
     if not api_key:
         raise ValueError("No GEMINI_API_KEY")
     b64 = base64.b64encode(image_data).decode()
-    url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
+    url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent"
     payload = {
         "contents": [{"parts": [
             {"text": SCHEMA_PROMPT + "\n\nIdentify all Pokemon cards in this image."},
