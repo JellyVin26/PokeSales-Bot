@@ -419,9 +419,9 @@ async def _standalone_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         return
     try:
         await receive_photo(update, context)
-    except Exception:
+    except Exception as e:
         log.exception("receive_photo failed in standalone handler")
-        await update.message.reply_text("Error processing photo. Try /new again.")
+        await update.message.reply_text(f"Error: {type(e).__name__}: {e}")
 
 
 def register_handlers(application: Application) -> None:
@@ -457,3 +457,13 @@ def register_handlers(application: Application) -> None:
         filters.PHOTO & ~filters.COMMAND, _standalone_photo
     ))
     application.add_handler(CallbackQueryHandler(on_button, pattern=r"^sale:|^cmd:"))
+
+    # Global error handler - send error to user
+    async def error_handler(update, context):
+        log.exception("Unhandled error: %s", context.error)
+        if update and hasattr(update, 'message') and update.message:
+            try:
+                await update.message.reply_text(f"Bot error: {type(context.error).__name__}: {context.error}")
+            except Exception:
+                pass
+    application.add_error_handler(error_handler)
