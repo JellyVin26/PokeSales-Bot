@@ -1,6 +1,7 @@
 """Database models for the pokebot application."""
 
 from sqlalchemy import (
+    BigInteger,
     JSON,
     Boolean,
     Column,
@@ -26,7 +27,7 @@ class User(Base):
     __tablename__ = "users"
 
     id = Column(Integer, primary_key=True)
-    telegram_user_id = Column(Integer, unique=True, nullable=False, index=True)
+    telegram_user_id = Column(BigInteger, unique=True, nullable=False, index=True)
     username = Column(String(128), nullable=True)
     first_name = Column(String(128), nullable=True)
     last_name = Column(String(128), nullable=True)
@@ -65,7 +66,7 @@ class Sale(Base):
     __tablename__ = "sales"
 
     id = Column(String(32), primary_key=True)  # e.g., "S-0001"
-    telegram_user_id = Column(Integer, nullable=False, index=True)
+    telegram_user_id = Column(BigInteger, nullable=False, index=True)
     total_amount = Column(Float, nullable=False)
     currency = Column(String(16), nullable=False, default="MYR")
     payment_method = Column(String(64), nullable=False, default="Unknown")
