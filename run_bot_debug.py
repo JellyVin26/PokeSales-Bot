@@ -25,10 +25,15 @@ factory = make_session_factory(engine)
 
 from telegram.ext import Application
 
+from sqlalchemy import text
+
 async def post_init(app):
     """Run inside Application's event loop -- avoids loop mismatch."""
     async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.drop_all)
+        # Drop tables with CASCADE to handle FK constraints
+        await conn.execute(text(
+            "DROP TABLE IF EXISTS sheet_sync_queue, sale_photos, sale_items, sales, cards, users CASCADE"
+        ))
         await conn.run_sync(Base.metadata.create_all)
     log.info("DB initialized")
     app.bot_data["engine"] = engine
