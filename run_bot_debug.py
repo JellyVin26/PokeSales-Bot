@@ -51,7 +51,7 @@ def main():
     register_handlers(app)
 
     external_url = os.getenv("RENDER_EXTERNAL_URL", "")
-    if False:
+    if external_url:
         port = int(os.getenv("PORT", "10000"))
         log.info("Webhook mode on %s:%s", external_url, port)
         app.run_webhook(
