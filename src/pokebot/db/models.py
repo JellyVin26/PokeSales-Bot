@@ -6,6 +6,7 @@ from sqlalchemy import (
     Column,
     DateTime,
     Float,
+    ForeignKey,
     Integer,
     String,
     Text,
@@ -87,8 +88,8 @@ class SaleItem(Base):
     __tablename__ = "sale_items"
 
     id = Column(Integer, primary_key=True)
-    sale_id = Column(String(32), nullable=False, index=True)
-    card_id = Column(Integer, nullable=True, index=True)
+    sale_id = Column(String(32), ForeignKey("sales.id"), nullable=False, index=True)
+    card_id = Column(Integer, ForeignKey("cards.id"), nullable=True, index=True)
     card_name = Column(String(256), nullable=False)
     set_name = Column(String(256), nullable=True)
     set_id = Column(String(64), nullable=True)
@@ -111,7 +112,7 @@ class SalePhoto(Base):
     __tablename__ = "sale_photos"
 
     id = Column(Integer, primary_key=True)
-    sale_id = Column(String(32), nullable=False, index=True)
+    sale_id = Column(String(32), ForeignKey("sales.id"), nullable=False, index=True)
     telegram_file_id = Column(String(256), nullable=False)
     stored_path = Column(String(512), nullable=True)
     detected_cards_json = Column(JSON, nullable=True)  # per-photo AI result
