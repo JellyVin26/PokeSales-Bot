@@ -47,10 +47,11 @@ def _confirm_kb() -> InlineKeyboardMarkup:
     )
 
 
-async def _ensure_user(session: AsyncSession, update: Update) -> None:
+async def _ensure_user(factory, update: Update) -> None:
     u = update.effective_user
-    await q.upsert_user(session, u.id, username=u.username, first_name=u.first_name)
-    await session.commit()
+    async with factory() as session:
+        await q.upsert_user(session, u.id, username=u.username, first_name=u.first_name)
+        await session.commit()
 
 
 # ---- Simple commands ----
@@ -148,10 +149,10 @@ async def finish_sale(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
 
 async def _analyze_and_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     log.info("_analyze_and_confirm called, photos=%s", len(context.user_data.get("photos", [])))
-    session: AsyncSession = context.bot_data["session"]
+    factory = context.bot_data["session"]
     settings = get_settings()
 
-    await _ensure_user(session, update)
+    await _ensure_user(factory, update)
     user_id = update.effective_user.id
     file_ids: list[str] = context.user_data["photos"]
     parsed = context.user_data["amount"]
@@ -211,36 +212,37 @@ async def _analyze_and_confirm(update: Update, context: ContextTypes.DEFAULT_TYP
             }
         )
 
-    if ai_failed or not db_ok:
-        # FR error handling: save draft so nothing is lost
+    async with factory() as session:
+        if ai_failed or not db_ok:
+            # FR error handling: save draft so nothing is lost
+            async with session.begin():
+                sale = await q.create_draft_sale(
+                    session, user_id, parsed.amount, parsed.currency, parsed.payment_method
+                )
+                for fid in file_ids:
+                    await q.add_photo(session, sale.id, fid, quality_score=None)
+            await msg.edit_text(
+                f"Identification unavailable right now.\n"
+                f"Your transaction was saved as draft {sale.id}."
+            )
+            context.user_data.clear()
+            return ConversationHandler.END
+
+        if not validated_items:
+            await msg.edit_text(
+                "Couldn't identify any cards.\nRetake the photo or enter cards manually."
+            )
+            context.user_data["photos"] = []
+            return PHOTO
+
+        # 3. Draft + pending confirmation
         async with session.begin():
             sale = await q.create_draft_sale(
                 session, user_id, parsed.amount, parsed.currency, parsed.payment_method
             )
             for fid in file_ids:
-                await q.add_photo(session, sale.id, fid, quality_score=None)
-        await msg.edit_text(
-            f"Identification unavailable right now.\n"
-            f"Your transaction was saved as draft {sale.id}."
-        )
-        context.user_data.clear()
-        return ConversationHandler.END
-
-    if not validated_items:
-        await msg.edit_text(
-            "Couldn't identify any cards.\nRetake the photo or enter cards manually."
-        )
-        context.user_data["photos"] = []
-        return PHOTO
-
-    # 3. Draft + pending confirmation
-    async with session.begin():
-        sale = await q.create_draft_sale(
-            session, user_id, parsed.amount, parsed.currency, parsed.payment_method
-        )
-        for fid in file_ids:
-            await q.add_photo(session, sale.id, fid, quality_score=quality_scores[0] if quality_scores else None)
-        await q.replace_items(session, sale.id, validated_items)
+                await q.add_photo(session, sale.id, fid, quality_score=quality_scores[0] if quality_scores else None)
+            await q.replace_items(session, sale.id, validated_items)
 
     lines = [f"{i}. {it['card_name']} x{it['quantity']}"
              + (" ✓" if it["confidence"] >= 0.9 else f" ? {int(it['confidence']*100)}%")
@@ -272,9 +274,10 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             "New sale. Send card photo(s), then caption with amount (e.g. RM 13 QR).\n/cancel to abort."
         )
         return
+    factory = context.bot_data["session"]
     if action == "sales":
-        session: AsyncSession = context.bot_data["session"]
-        rows = await q.recent_sales(session, limit=10)
+        async with factory() as session:
+            rows = await q.recent_sales(session, limit=10)
         text = "No sales yet." if not rows else "Recent Sales\n\n" + "\n".join(
             f"{s.id} -- RM {s.total_amount:.2f}" for s in rows
         )
@@ -282,8 +285,8 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await query.message.reply_text(text)
         return
     if action == "today":
-        session: AsyncSession = context.bot_data["session"]
-        s = await q.today_summary(session)
+        async with factory() as session:
+            s = await q.today_summary(session)
         await query.message.edit_reply_markup()
         await query.message.reply_text(
             f"Today's Sales\n\nTransactions: {s['transactions']}\n"
@@ -304,10 +307,10 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if "#" in text:
         sale_id = text.split("#")[1].split()[0]
 
-    session: AsyncSession = context.bot_data["session"]
+    factory = context.bot_data["session"]
 
     if action == "confirm":
-        async with session.begin():
+        async with factory() as session:
             sale = await q.confirm_sale(session, sale_id)
         if sale is None:
             await query.edit_message_text("Sale not found.")
@@ -315,9 +318,10 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         synced = False
         client = context.bot_data.get("sheets_client")
         if client:
-            synced = await sheets_svc.sync_sale_or_enqueue(
-                client, settings_sheet_id(context), session, sale_id
-            )
+            async with factory() as session:
+                synced = await sheets_svc.sync_sale_or_enqueue(
+                    client, settings_sheet_id(context), session, sale_id
+                )
         note = "" if synced else "\n\nGoogle Sheets sync pending."
         await query.edit_message_text(
             f"Sale #{sale_id} recorded successfully.\n"
@@ -326,7 +330,7 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         )
 
     elif action == "cancel":
-        async with session.begin():
+        async with factory() as session:
             await q.cancel_sale(session, sale_id)
         await query.edit_message_text(f"Sale #{sale_id} cancelled.")
 
@@ -349,8 +353,9 @@ def settings_sheet_id(context: ContextTypes.DEFAULT_TYPE) -> str:
 # ---- Query commands ----
 
 async def sales_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    session: AsyncSession = context.bot_data["session"]
-    rows = await q.recent_sales(session, limit=10)
+    factory = context.bot_data["session"]
+    async with factory() as session:
+        rows = await q.recent_sales(session, limit=10)
     if not rows:
         await update.message.reply_text("No sales yet.")
         return
@@ -361,8 +366,9 @@ async def sales_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def today_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    session: AsyncSession = context.bot_data["session"]
-    s = await q.today_summary(session)
+    factory = context.bot_data["session"]
+    async with factory() as session:
+        s = await q.today_summary(session)
     await update.message.reply_text(
         f"Today's Sales\n\nTransactions: {s['transactions']}\n"
         f"Cards Sold: {s['cards_sold']}\nRevenue: RM {s['revenue']:.2f}"
@@ -370,12 +376,13 @@ async def today_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def sale_detail(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    session: AsyncSession = context.bot_data["session"]
+    factory = context.bot_data["session"]
     args = context.args or []
     if not args:
         await update.message.reply_text("Usage: /sale S-0001")
         return
-    sale = await q.get_sale_with_items(session, args[0].upper())
+    async with factory() as session:
+        sale = await q.get_sale_with_items(session, args[0].upper())
     if sale is None:
         await update.message.reply_text("Sale not found.")
         return
@@ -387,12 +394,13 @@ async def sale_detail(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
 
 async def card_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    session: AsyncSession = context.bot_data["session"]
+    factory = context.bot_data["session"]
     args = context.args or []
     if not args:
         await update.message.reply_text("Usage: /card Dusknoir")
         return
-    stats = await q.card_stats(session, " ".join(args))
+    async with factory() as session:
+        stats = await q.card_stats(session, " ".join(args))
     if stats is None:
         await update.message.reply_text("No sales recorded for that card.")
         return
