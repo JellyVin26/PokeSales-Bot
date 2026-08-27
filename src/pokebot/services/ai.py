@@ -1,4 +1,4 @@
-"""AI service for Pokemon card recognition with OpenAI + Gemini fallback."""
+"""AI service for Pokemon card recognition with OpenAI + Gemini + manual fallback."""
 
 import base64
 import json
@@ -39,7 +39,6 @@ def _validate_card(c: dict) -> bool:
 def _parse_response(content: str) -> dict:
     """Extract JSON from model response, handling markdown code blocks."""
     import re
-    # Strip markdown code blocks if present
     cleaned = re.sub(r"```(?:json)?\s*", "", content).strip()
     try:
         data = json.loads(cleaned)
@@ -48,7 +47,6 @@ def _parse_response(content: str) -> dict:
         if start < 0 or end <= start:
             raise ValueError("Model returned non-JSON output")
         data = json.loads(cleaned[start:end])
-    # Handle case where JSON parses to a string instead of dict
     if isinstance(data, str):
         data = json.loads(data)
     return data
@@ -105,15 +103,103 @@ async def _try_gemini(image_data: bytes, mime_type: str) -> RecognitionResult:
     return _to_result(resp.text or "")
 
 
-# ---- Main entry: try OpenAI, fallback to Gemini ----
+# ---- Local perceptual hash fallback ----
+
+_hash_db: dict[str, str] = {}  # card_id -> card_name
+_hashes_loaded = False
+
+async def _load_hash_db():
+    """Fetch card images from Pokemon TCG API and compute perceptual hashes."""
+    global _hash_db, _hashes_loaded
+    if _hashes_loaded:
+        return
+    try:
+        import httpx
+        import imagehash
+        from PIL import Image
+        from io import BytesIO
+
+        page = 1
+        total = 9999
+        async with httpx.AsyncClient(timeout=30) as client:
+            while (page - 1) * 250 < total:
+                resp = await client.get(
+                    "https://api.pokemontcg.io/v2/cards",
+                    params={"pageSize": 250, "page": page},
+                )
+                data = resp.json()
+                total = data.get("totalCount", 0)
+                for card in data.get("data", []):
+                    card_id = card.get("id", "")
+                    name = card.get("name", "")
+                    img_url = card.get("images", {}).get("small", "")
+                    if not img_url or not name:
+                        continue
+                    try:
+                        img_resp = await client.get(img_url, follow_redirects=True)
+                        img = Image.open(BytesIO(img_resp.content)).convert("RGB").resize((128, 128))
+                        h = imagehash.phash(img)
+                        _hash_db[str(h)] = name
+                    except Exception:
+                        pass
+                page += 1
+                if page > 40:  # cap at ~10k cards to avoid timeout
+                    break
+        _hashes_loaded = True
+        log.info("Loaded %d card hashes", len(_hash_db))
+    except Exception as e:
+        log.warning("Failed to load hash DB: %s", e)
+        _hashes_loaded = True  # don't retry
+
+
+async def _try_local_hash(image_data: bytes, mime_type: str) -> RecognitionResult:
+    """Match photo against precomputed card hashes."""
+    await _load_hash_db()
+    if not _hash_db:
+        raise ValueError("No card hashes loaded")
+    import imagehash
+    from PIL import Image
+    from io import BytesIO
+
+    img = Image.open(BytesIO(image_data)).convert("RGB").resize((128, 128))
+    query_hash = imagehash.phash(img)
+
+    # Find closest matches
+    matches = []
+    for stored_hash_str, name in _hash_db.items():
+        stored_hash = imagehash.hex_to_hash(stored_hash_str)
+        distance = query_hash - stored_hash
+        if distance < 20:  # threshold
+            confidence = max(0, 1 - distance / 20)
+            matches.append({"name": name, "confidence": round(confidence, 2)})
+
+    if not matches:
+        raise ValueError("No matching cards found")
+
+    # Deduplicate by name, keep best confidence
+    seen = {}
+    for m in matches:
+        if m["name"] not in seen or m["confidence"] > seen[m["name"]]["confidence"]:
+            seen[m["name"]] = m
+    cards = sorted(seen.values(), key=lambda x: -x["confidence"])[:10]
+    for c in cards:
+        c["quantity"] = 1
+
+    return RecognitionResult(
+        cards=cards,
+        image_quality={"score": 0.5, "usable": True},
+    )
+
+
+# ---- Main entry: try all providers in order ----
 
 async def recognize_cards(
     image_data: bytes,
     mime_type: str = "image/jpeg",
 ) -> RecognitionResult:
-    """Try OpenAI first, fallback to Gemini. Raises if both fail."""
+    """Try OpenAI -> Gemini -> local hash. Raises if all fail."""
     errors = []
-    for name, fn in [("OpenAI", _try_openai), ("Gemini", _try_gemini)]:
+    for name, fn in [("OpenAI", _try_openai), ("Gemini", _try_gemini), ("Local", _try_local_hash)]:
         try:
             result = await fn(image_data, mime_type)
             log.info("Card recognition via %s: %d cards found", name, len(result.cards))
@@ -121,4 +207,4 @@ async def recognize_cards(
         except Exception as e:
             log.warning("%s failed: %s", name, e)
             errors.append(f"{name}: {e}")
-    raise RuntimeError("All AI providers failed: " + "; ".join(errors))
+    raise RuntimeError("All recognition methods failed: " + "; ".join(errors))
