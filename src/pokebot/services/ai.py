@@ -89,12 +89,12 @@ async def _try_openai(image_data: bytes, mime_type: str) -> RecognitionResult:
 # ---- Gemini (direct HTTP, supports Google Cloud API keys) ----
 
 async def _try_gemini(image_data: bytes, mime_type: str) -> RecognitionResult:
-    import httpx
+    import httpx, asyncio
     api_key = os.getenv("GEMINI_API_KEY", "")
     if not api_key:
         raise ValueError("No GEMINI_API_KEY")
     b64 = base64.b64encode(image_data).decode()
-    url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent"
+    models = ["gemini-3.5-flash", "gemini-flash-latest", "gemini-3-flash-preview"]
     payload = {
         "contents": [{"parts": [
             {"text": SCHEMA_PROMPT + "\n\nIdentify all Pokemon cards in this image."},
@@ -102,23 +102,29 @@ async def _try_gemini(image_data: bytes, mime_type: str) -> RecognitionResult:
         ]}],
         "generationConfig": {"temperature": 0},
     }
-    # Retry up to 2 times for transient errors (503, 429)
-    for attempt in range(3):
-        async with httpx.AsyncClient(timeout=30) as client:
-            resp = await client.post(
-                f"{url}?key={api_key}",
-                json=payload,
-                headers={"Content-Type": "application/json"},
-            )
-            if resp.status_code in (503, 429) and attempt < 2:
-                import asyncio
-                await asyncio.sleep(2 * (attempt + 1))
-                continue
-            resp.raise_for_status()
-            data = resp.json()
-            break
-    text = data["candidates"][0]["content"]["parts"][0]["text"]
-    return _to_result(_parse_response(text))
+    last_error = None
+    for model in models:
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+        for attempt in range(2):
+            try:
+                async with httpx.AsyncClient(timeout=30) as client:
+                    resp = await client.post(
+                        f"{url}?key={api_key}",
+                        json=payload,
+                        headers={"Content-Type": "application/json"},
+                    )
+                    if resp.status_code in (503, 429) and attempt < 1:
+                        await asyncio.sleep(2 * (attempt + 1))
+                        continue
+                    resp.raise_for_status()
+                    data = resp.json()
+                    text = data["candidates"][0]["content"]["parts"][0]["text"]
+                    return _to_result(_parse_response(text))
+            except Exception as e:
+                last_error = e
+                if attempt < 1:
+                    await asyncio.sleep(1)
+    raise last_error or ValueError("All Gemini models failed")
 
 
 # ---- Local perceptual hash fallback ----
