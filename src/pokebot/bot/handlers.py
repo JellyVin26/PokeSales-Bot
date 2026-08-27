@@ -400,9 +400,22 @@ async def card_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     )
 
 
+async def _standalone_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle photos outside ConversationHandler (button-initiated sale)."""
+    if not _authorized(update.effective_user.id):
+        return
+    if "photos" not in context.user_data:
+        await update.message.reply_text("Tap /new first, then send the photo.")
+        return
+    await receive_photo(update, context)
+
+
 def register_handlers(application: Application) -> None:
     conv = ConversationHandler(
-        entry_points=[CommandHandler("new", new_sale)],
+        entry_points=[
+            CommandHandler("new", new_sale),
+            # no CallbackQueryHandler here - button route handled separately
+        ],
         states={
             PHOTO: [
                 MessageHandler(filters.PHOTO, receive_photo),
@@ -411,20 +424,22 @@ def register_handlers(application: Application) -> None:
         },
         fallbacks=[
             CommandHandler("cancel", cancel),
-            MessageHandler(
-                filters.Regex("^Finish Sale$"), finish_sale
-            ),
+            MessageHandler(filters.Regex("^Finish Sale$"), finish_sale),
         ],
         allow_reentry=True,
     )
 
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("help", help_cmd))
-    application.add_handler(CommandHandler("new", new_sale))
     application.add_handler(CommandHandler("cancel", cancel))
     application.add_handler(CommandHandler("sales", sales_cmd))
     application.add_handler(CommandHandler("today", today_cmd))
     application.add_handler(CommandHandler("sale", sale_detail))
     application.add_handler(CommandHandler("card", card_cmd))
     application.add_handler(conv)
+    # Standalone photo handler for when user taps "New Sale" button
+    # (bypasses ConversationHandler, so we catch photos manually)
+    application.add_handler(MessageHandler(
+        filters.PHOTO & ~filters.COMMAND, _standalone_photo
+    ))
     application.add_handler(CallbackQueryHandler(on_button, pattern=r"^sale:|^cmd:"))
