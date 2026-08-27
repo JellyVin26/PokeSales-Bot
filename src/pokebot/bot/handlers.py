@@ -192,6 +192,8 @@ async def _analyze_and_confirm(update: Update, context: ContextTypes.DEFAULT_TYP
         except Exception as e:  # noqa: BLE001
             log.warning("AI failed: %s", e)
             ai_failed = True
+            # Show user what went wrong so they can fix it
+            await msg.edit_text(f"AI identification failed: {type(e).__name__}: {e}\n\nSaving as draft...")
 
     # 2. Validate candidates against pokemontcg.io
     validated_items: list[dict] = []
