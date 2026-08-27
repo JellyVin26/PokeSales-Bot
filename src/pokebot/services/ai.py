@@ -86,23 +86,32 @@ async def _try_openai(image_data: bytes, mime_type: str) -> RecognitionResult:
     return _to_result(_parse_response(resp.choices[0].message.content or ""))
 
 
-# ---- Gemini ----
+# ---- Gemini (direct HTTP, supports Google Cloud API keys) ----
 
 async def _try_gemini(image_data: bytes, mime_type: str) -> RecognitionResult:
-    import google.generativeai as genai
+    import httpx
     api_key = os.getenv("GEMINI_API_KEY", "")
     if not api_key:
         raise ValueError("No GEMINI_API_KEY")
-    genai.configure(api_key=api_key)
-    model = genai.GenerativeModel("gemini-2.5-flash")
-    resp = await model.generate_content_async(
-        [
-            SCHEMA_PROMPT,
-            {"mime_type": mime_type, "data": image_data},
-        ],
-        generation_config=genai.GenerationConfig(temperature=0),
-    )
-    return _to_result(_parse_response(resp.text or ""))
+    b64 = base64.b64encode(image_data).decode()
+    url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
+    payload = {
+        "contents": [{"parts": [
+            {"text": SCHEMA_PROMPT + "\n\nIdentify all Pokemon cards in this image."},
+            {"inlineData": {"mimeType": mime_type, "data": b64}},
+        ]}],
+        "generationConfig": {"temperature": 0},
+    }
+    async with httpx.AsyncClient(timeout=60) as client:
+        resp = await client.post(
+            f"{url}?key={api_key}",
+            json=payload,
+            headers={"Content-Type": "application/json"},
+        )
+        resp.raise_for_status()
+        data = resp.json()
+    text = data["candidates"][0]["content"]["parts"][0]["text"]
+    return _to_result(_parse_response(text))
 
 
 # ---- Local perceptual hash fallback ----
