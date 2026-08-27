@@ -147,6 +147,7 @@ async def finish_sale(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
 
 
 async def _analyze_and_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    log.info("_analyze_and_confirm called, photos=%s", len(context.user_data.get("photos", [])))
     session: AsyncSession = context.bot_data["session"]
     settings = get_settings()
 
@@ -402,12 +403,17 @@ async def card_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 async def _standalone_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle photos outside ConversationHandler (button-initiated sale)."""
+    log.info("_standalone_photo triggered, user_data keys=%s", list(context.user_data.keys()))
     if not _authorized(update.effective_user.id):
         return
     if "photos" not in context.user_data:
         await update.message.reply_text("Tap /new first, then send the photo.")
         return
-    await receive_photo(update, context)
+    try:
+        await receive_photo(update, context)
+    except Exception:
+        log.exception("receive_photo failed in standalone handler")
+        await update.message.reply_text("Error processing photo. Try /new again.")
 
 
 def register_handlers(application: Application) -> None:
