@@ -52,7 +52,9 @@ def _parse_response(content: str) -> dict:
     return data
 
 
-def _to_result(data: dict) -> RecognitionResult:
+def _to_result(data) -> RecognitionResult:
+    if isinstance(data, str):
+        data = _parse_response(data)
     cards = [c for c in data.get("cards", []) if _validate_card(c)]
     quality = data.get("image_quality") or {"score": 0.0, "usable": False}
     return RecognitionResult(cards=cards, image_quality=quality)
