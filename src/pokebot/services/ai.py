@@ -37,14 +37,21 @@ def _validate_card(c: dict) -> bool:
 
 
 def _parse_response(content: str) -> dict:
-    """Extract JSON from model response."""
+    """Extract JSON from model response, handling markdown code blocks."""
+    import re
+    # Strip markdown code blocks if present
+    cleaned = re.sub(r"```(?:json)?\s*", "", content).strip()
     try:
-        return json.loads(content)
+        data = json.loads(cleaned)
     except json.JSONDecodeError:
-        start, end = content.find("{"), content.rfind("}") + 1
+        start, end = cleaned.find("{"), cleaned.rfind("}") + 1
         if start < 0 or end <= start:
             raise ValueError("Model returned non-JSON output")
-        return json.loads(content[start:end])
+        data = json.loads(cleaned[start:end])
+    # Handle case where JSON parses to a string instead of dict
+    if isinstance(data, str):
+        data = json.loads(data)
+    return data
 
 
 def _to_result(data: dict) -> RecognitionResult:
