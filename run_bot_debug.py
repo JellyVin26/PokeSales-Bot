@@ -17,6 +17,7 @@ log.info("Config OK -- token %s..., db %s...", TOKEN[:10], DB_URL[:30])
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "src"))
 
 from pokebot.bot.handlers import register_handlers
+from pokebot.services import ai as ai_svc
 from pokebot.db.session import make_engine, make_session_factory
 from pokebot.db.models import Base
 
@@ -36,8 +37,14 @@ async def post_init(app):
         ))
         await conn.run_sync(Base.metadata.create_all)
     log.info("DB initialized")
-    app.bot_data["engine"] = engine
-    app.bot_data["session"] = factory
+    try:
+        app.bot_data["engine"] = engine
+        app.bot_data["session"] = factory
+        # Pre-load card hash DB in background
+        import asyncio
+        asyncio.create_task(ai_svc._load_hash_db())
+    except Exception as e:
+        log.warning("post_init error: %s", e)
 
 def main():
     app = Application.builder().token(TOKEN).post_init(post_init).build()

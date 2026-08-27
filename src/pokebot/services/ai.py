@@ -102,7 +102,7 @@ async def _try_gemini(image_data: bytes, mime_type: str) -> RecognitionResult:
         ]}],
         "generationConfig": {"temperature": 0},
     }
-    async with httpx.AsyncClient(timeout=60) as client:
+    async with httpx.AsyncClient(timeout=30) as client:
         resp = await client.post(
             f"{url}?key={api_key}",
             json=payload,
