@@ -53,6 +53,18 @@ def main():
     sheet_id = os.getenv("GOOGLE_SHEET_ID", "")
     if sheets_json and sheet_id:
         log.info("Sheets enabled")
+        try:
+            import json, google.auth, google.auth.transport.requests
+            from google.oauth2 import service_account
+            from googleapiclient.discovery import build
+            creds = service_account.Credentials.from_service_account_info(
+                json.loads(sheets_json), scopes=["https://www.googleapis.com/auth/spreadsheets"]
+            )
+            app.bot_data["sheets_client"] = build("sheets", "v4", credentials=creds)
+            app.bot_data["sheet_id"] = sheet_id
+            log.info("Sheets client created")
+        except Exception as e:
+            log.warning("Sheets setup failed: %s", e)
     else:
         log.info("Sheets disabled")
 
