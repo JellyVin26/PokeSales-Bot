@@ -1,9 +1,11 @@
-"""AI service for Pokémon card recognition using vision models."""
+"""AI service for Pokemon card recognition with OpenAI + Gemini fallback."""
 
 import base64
 import json
+import logging
+import os
 
-from openai import AsyncOpenAI
+log = logging.getLogger(__name__)
 
 SCHEMA_PROMPT = (
     "You are a Pokemon TCG card identifier. Look at the image and list every "
@@ -34,16 +36,34 @@ def _validate_card(c: dict) -> bool:
     )
 
 
-async def recognize_cards(
-    client: AsyncOpenAI,
-    image_data: bytes,
-    mime_type: str = "image/jpeg",
-    model: str = "gpt-4o-mini",
-) -> RecognitionResult:
-    """Run vision recognition on one photo. Raises on API failure."""
+def _parse_response(content: str) -> dict:
+    """Extract JSON from model response."""
+    try:
+        return json.loads(content)
+    except json.JSONDecodeError:
+        start, end = content.find("{"), content.rfind("}") + 1
+        if start < 0 or end <= start:
+            raise ValueError("Model returned non-JSON output")
+        return json.loads(content[start:end])
+
+
+def _to_result(data: dict) -> RecognitionResult:
+    cards = [c for c in data.get("cards", []) if _validate_card(c)]
+    quality = data.get("image_quality") or {"score": 0.0, "usable": False}
+    return RecognitionResult(cards=cards, image_quality=quality)
+
+
+# ---- OpenAI ----
+
+async def _try_openai(image_data: bytes, mime_type: str) -> RecognitionResult:
+    from openai import AsyncOpenAI
+    api_key = os.getenv("OPENAI_API_KEY", "")
+    if not api_key:
+        raise ValueError("No OPENAI_API_KEY")
+    client = AsyncOpenAI(api_key=api_key)
     b64 = base64.b64encode(image_data).decode()
     resp = await client.chat.completions.create(
-        model=model,
+        model="gpt-4o-mini",
         temperature=0,
         messages=[
             {"role": "system", "content": SCHEMA_PROMPT},
@@ -51,23 +71,47 @@ async def recognize_cards(
                 "role": "user",
                 "content": [
                     {"type": "text", "text": "Identify all Pokemon cards."},
-                    {
-                        "type": "image_url",
-                        "image_url": {"url": f"data:{mime_type};base64,{b64}"},
-                    },
+                    {"type": "image_url", "image_url": {"url": f"data:{mime_type};base64,{b64}"}},
                 ],
             },
         ],
     )
-    content = resp.choices[0].message.content or ""
-    try:
-        data = json.loads(content)
-    except json.JSONDecodeError:
-        start, end = content.find("{"), content.rfind("}") + 1
-        if start < 0 or end <= start:
-            raise ValueError("Vision model returned non-JSON output")
-        data = json.loads(content[start:end])
+    return _to_result(resp.choices[0].message.content or "")
 
-    cards = [c for c in data.get("cards", []) if _validate_card(c)]
-    quality = data.get("image_quality") or {"score": 0.0, "usable": False}
-    return RecognitionResult(cards=cards, image_quality=quality)
+
+# ---- Gemini ----
+
+async def _try_gemini(image_data: bytes, mime_type: str) -> RecognitionResult:
+    import google.generativeai as genai
+    api_key = os.getenv("GEMINI_API_KEY", "")
+    if not api_key:
+        raise ValueError("No GEMINI_API_KEY")
+    genai.configure(api_key=api_key)
+    model = genai.GenerativeModel("gemini-2.0-flash")
+    resp = await model.generate_content_async(
+        [
+            SCHEMA_PROMPT,
+            {"mime_type": mime_type, "data": image_data},
+        ],
+        generation_config=genai.GenerationConfig(temperature=0),
+    )
+    return _to_result(resp.text or "")
+
+
+# ---- Main entry: try OpenAI, fallback to Gemini ----
+
+async def recognize_cards(
+    image_data: bytes,
+    mime_type: str = "image/jpeg",
+) -> RecognitionResult:
+    """Try OpenAI first, fallback to Gemini. Raises if both fail."""
+    errors = []
+    for name, fn in [("OpenAI", _try_openai), ("Gemini", _try_gemini)]:
+        try:
+            result = await fn(image_data, mime_type)
+            log.info("Card recognition via %s: %d cards found", name, len(result.cards))
+            return result
+        except Exception as e:
+            log.warning("%s failed: %s", name, e)
+            errors.append(f"{name}: {e}")
+    raise RuntimeError("All AI providers failed: " + "; ".join(errors))

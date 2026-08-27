@@ -3,7 +3,6 @@
 import logging
 from datetime import datetime
 
-from openai import AsyncOpenAI
 from sqlalchemy.ext.asyncio import AsyncSession
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import (
@@ -164,7 +163,6 @@ async def _analyze_and_confirm(update: Update, context: ContextTypes.DEFAULT_TYP
     quality_scores: list[float] = []
     ai_failed = False
 
-    oai = AsyncOpenAI(api_key=settings.openai_api_key) if settings.openai_api_key else None
     tg_file = await context.bot.get_file(file_ids[0])
 
     import httpx
@@ -173,28 +171,26 @@ async def _analyze_and_confirm(update: Update, context: ContextTypes.DEFAULT_TYP
         img_resp = await hc.get(tg_file.file_path)
         image_bytes = img_resp.content
 
-    if oai is not None:
-        try:
-            result = await ai_svc.recognize_cards(oai, image_bytes)
-            detections = result.cards
-            quality_scores = [result.image_quality.get("score", 0)]
-            if not result.image_quality.get("usable", False):
-                await msg.edit_text(
-                    "Can't reliably identify these cards.\n"
-                    "- Shoot from directly above\n"
-                    "- Better lighting\n"
-                    "- Avoid overlapping cards\n"
-                    "- Card names visible\n\n"
-                    "Retake the photo or /cancel."
-                )
-                context.user_data["photos"] = []
-                return PHOTO
-        except Exception as e:  # noqa: BLE001
-            log.warning("AI failed: %s", e)
-            ai_failed = True
-            err_text = f"AI error: {type(e).__name__}: {str(e)[:500]}"
-            # Send as new message so it doesn't get overwritten
-            await update.effective_message.reply_text(err_text)
+    try:
+        result = await ai_svc.recognize_cards(image_bytes)
+        detections = result.cards
+        quality_scores = [result.image_quality.get("score", 0)]
+        if not result.image_quality.get("usable", False):
+            await msg.edit_text(
+                "Can't reliably identify these cards.\n"
+                "- Shoot from directly above\n"
+                "- Better lighting\n"
+                "- Avoid overlapping cards\n"
+                "- Card names visible\n\n"
+                "Retake the photo or /cancel."
+            )
+            context.user_data["photos"] = []
+            return PHOTO
+    except Exception as e:  # noqa: BLE001
+        log.warning("AI failed: %s", e)
+        ai_failed = True
+        err_text = f"AI error: {type(e).__name__}: {str(e)[:500]}"
+        await update.effective_message.reply_text(err_text)
 
     # 2. Validate candidates against pokemontcg.io
     validated_items: list[dict] = []
