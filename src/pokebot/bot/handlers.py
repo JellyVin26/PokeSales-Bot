@@ -192,27 +192,35 @@ async def _analyze_and_confirm(update: Update, context: ContextTypes.DEFAULT_TYP
         err_text = f"AI error: {type(e).__name__}: {str(e)[:500]}"
         await update.effective_message.reply_text(err_text)
 
-    # 2. Validate candidates against pokemontcg.io
+    # 2. Validate candidates against pokemontcg.io (soft fallback: keep AI name if not found)
     validated_items: list[dict] = []
-    db_ok = True
     for det in detections:
         info = await cards_svc.validate_detection(det["name"])
-        if info is None:
-            db_ok = False
-            break
-        validated_items.append(
-            {
-                "card_name": info["official_name"],
-                "set_name": info["set_name"],
-                "set_id": info["set_id"],
-                "card_number": info["card_number"],
-                "quantity": det.get("quantity", 1),
-                "confidence": det.get("confidence", 0),
-            }
-        )
+        if info:
+            validated_items.append(
+                {
+                    "card_name": info["official_name"],
+                    "set_name": info.get("set_name"),
+                    "set_id": info.get("set_id"),
+                    "card_number": info.get("card_number"),
+                    "quantity": det.get("quantity", 1),
+                    "confidence": det.get("confidence", 0),
+                }
+            )
+        else:
+            validated_items.append(
+                {
+                    "card_name": det["name"],
+                    "set_name": det.get("set"),
+                    "set_id": None,
+                    "card_number": det.get("card_number"),
+                    "quantity": det.get("quantity", 1),
+                    "confidence": det.get("confidence", 0),
+                }
+            )
 
     async with factory() as session:
-        if ai_failed or not db_ok:
+        if ai_failed or not validated_items:
             # FR error handling: save draft so nothing is lost
             async with session.begin():
                 sale = await q.create_draft_sale(
