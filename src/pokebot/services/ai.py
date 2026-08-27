@@ -81,7 +81,7 @@ async def _try_openai(image_data: bytes, mime_type: str) -> RecognitionResult:
             },
         ],
     )
-    return _to_result(resp.choices[0].message.content or "")
+    return _to_result(_parse_response(resp.choices[0].message.content or ""))
 
 
 # ---- Gemini ----
@@ -100,7 +100,7 @@ async def _try_gemini(image_data: bytes, mime_type: str) -> RecognitionResult:
         ],
         generation_config=genai.GenerationConfig(temperature=0),
     )
-    return _to_result(resp.text or "")
+    return _to_result(_parse_response(resp.text or ""))
 
 
 # ---- Local perceptual hash fallback ----
@@ -114,42 +114,46 @@ async def _load_hash_db():
     if _hashes_loaded:
         return
     try:
-        import httpx
         import imagehash
         from PIL import Image
         from io import BytesIO
+        import httpx
 
         page = 1
         total = 9999
-        async with httpx.AsyncClient(timeout=30) as client:
-            while (page - 1) * 250 < total:
-                resp = await client.get(
-                    "https://api.pokemontcg.io/v2/cards",
-                    params={"pageSize": 250, "page": page},
-                )
-                data = resp.json()
-                total = data.get("totalCount", 0)
-                for card in data.get("data", []):
-                    card_id = card.get("id", "")
-                    name = card.get("name", "")
-                    img_url = card.get("images", {}).get("small", "")
-                    if not img_url or not name:
-                        continue
-                    try:
-                        img_resp = await client.get(img_url, follow_redirects=True)
-                        img = Image.open(BytesIO(img_resp.content)).convert("RGB").resize((128, 128))
-                        h = imagehash.phash(img)
-                        _hash_db[str(h)] = name
-                    except Exception:
-                        pass
-                page += 1
-                if page > 40:  # cap at ~10k cards to avoid timeout
+        async with httpx.AsyncClient(timeout=15) as client:
+            while (page - 1) * 250 < total and page <= 20:  # max ~5000 cards
+                try:
+                    resp = await client.get(
+                        "https://api.pokemontcg.io/v2/cards",
+                        params={"pageSize": 250, "page": page},
+                    )
+                    data = resp.json()
+                    total = data.get("totalCount", 0)
+                    for card in data.get("data", []):
+                        name = card.get("name", "")
+                        img_url = card.get("images", {}).get("small", "")
+                        if not img_url or not name:
+                            continue
+                        try:
+                            img_resp = await client.get(img_url, follow_redirects=True)
+                            img = Image.open(BytesIO(img_resp.content)).convert("RGB").resize((128, 128))
+                            h = imagehash.phash(img)
+                            _hash_db[str(h)] = name
+                        except Exception:
+                            pass
+                except Exception as e:
+                    log.warning("Hash DB page %d failed: %s", page, e)
                     break
+                page += 1
         _hashes_loaded = True
         log.info("Loaded %d card hashes", len(_hash_db))
+    except ImportError as e:
+        log.warning("imagehash not installed: %s", e)
+        _hashes_loaded = True
     except Exception as e:
         log.warning("Failed to load hash DB: %s", e)
-        _hashes_loaded = True  # don't retry
+        _hashes_loaded = True
 
 
 async def _try_local_hash(image_data: bytes, mime_type: str) -> RecognitionResult:
