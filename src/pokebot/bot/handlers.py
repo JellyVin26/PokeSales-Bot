@@ -318,21 +318,25 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     if action == "confirm":
         async with factory() as session:
-            sale = await q.confirm_sale(session, sale_id)
+            async with session.begin():
+                sale = await q.confirm_sale(session, sale_id)
         if sale is None:
             await query.edit_message_text("Sale not found.")
             return
         synced = False
         client = context.bot_data.get("sheets_client")
         if client:
-            async with factory() as session:
-                synced = await sheets_svc.sync_sale_or_enqueue(
-                    client, settings_sheet_id(context), session, sale_id
-                )
+            try:
+                async with factory() as session:
+                    synced = await sheets_svc.sync_sale_or_enqueue(
+                        client, settings_sheet_id(context), session, sale_id
+                    )
+            except Exception as e:
+                log.warning("Sheets sync error: %s", e)
         note = "" if synced else "\n\nGoogle Sheets sync pending."
         await query.edit_message_text(
             f"Sale #{sale_id} recorded successfully.\n"
-            f"RM {sale.total_amount:.2f}\n{sum(i.quantity for i in sale.items)} cards"
+            f"RM {sale.total_amount:.2f}"
             + note
         )
 
