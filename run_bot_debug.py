@@ -54,15 +54,16 @@ def main():
     if sheets_json and sheet_id:
         log.info("Sheets enabled")
         try:
-            import json, google.auth, google.auth.transport.requests
+            import json, gspread
             from google.oauth2 import service_account
-            from googleapiclient.discovery import build
+            scope = ["https://spreadsheets.google.com/feeds",
+                     "https://www.googleapis.com/auth/drive"]
             creds = service_account.Credentials.from_service_account_info(
-                json.loads(sheets_json), scopes=["https://www.googleapis.com/auth/spreadsheets"]
+                json.loads(sheets_json), scopes=scope
             )
-            app.bot_data["sheets_client"] = build("sheets", "v4", credentials=creds)
+            app.bot_data["sheets_client"] = gspread.authorize(creds)
             app.bot_data["sheet_id"] = sheet_id
-            log.info("Sheets client created")
+            log.info("Sheets client created (gspread)")
         except Exception as e:
             log.warning("Sheets setup failed: %s", e)
     else:
